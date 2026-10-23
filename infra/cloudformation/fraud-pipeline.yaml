@@ -1,0 +1,560 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Credit card fraud detection pipeline: S3 storage, Glue training job and Data Catalog,
+  FastAPI prediction API on ECS Fargate behind an ALB, Lambda + EventBridge retraining,
+  CloudWatch alarms and dashboard. Deploy with infra/cloudformation/deploy-cfn.sh, which
+  packages the local code paths below with `aws cloudformation package`.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for the load balancer and API tasks (the default VPC works).
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnets in at least two Availability Zones.
+  ArtifactBucket:
+    Type: String
+    Description: Bucket holding the packaged Glue script and Lambda code (created by deploy-cfn.sh).
+  ApiImageTag:
+    Type: String
+    Default: latest
+  DesiredCount:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: >-
+      API task count. Start at 0 until the first training run has saved a model,
+      then update to 1; auto scaling is only created when this is above 0.
+  GlueVersion:
+    Type: String
+    Default: "5.0"
+  LambdaRuntime:
+    Type: String
+    Default: python3.14
+
+Conditions:
+  HasTasks: !Not [!Equals [!Ref DesiredCount, 0]]
+
+Resources:
+  # ------------------------------------------------------------------ storage
+  # The bucket name is built from the stack name instead of !Ref so the roles and the
+  # Lambda can reference it without a circular dependency through the S3 notification.
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: LambdaS3Permission
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt RefreshFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: data/incoming/
+                  - Name: suffix
+                    Value: .csv
+
+  # ------------------------------------------------------------------ iam
+  GlueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-glue-training-role
+      Description: Glue training job and crawler
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: glue.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: fraud-bucket-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/data/*
+                  - !Sub arn:${AWS::Partition}:s3:::${ArtifactBucket}/*
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/models/*
+                  - !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/glue-temp/*
+              # Overwriting a model makes Glue's S3 connector write "<folder>_$folder$" objects
+              - Sid: GlueFolderMarkers
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/*_$folder$
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-refresh-lambda-role
+      Description: Retraining Lambda
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: fraud-refresh-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:DeleteObject]
+                Resource: !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/data/incoming/*
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/data/archive/*
+              - Effect: Allow
+                Action: glue:StartJobRun
+                Resource: !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:job/${TrainingJob}
+              - Effect: Allow
+                Action: ecs:UpdateService
+                Resource: !Ref ApiService
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-ecs-task-execution-role
+      Description: ECS pulls the API image and writes container logs
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-ecs-task-role
+      Description: Prediction API reads the model from S3
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: fraud-model-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}
+                Condition:
+                  StringLike:
+                    s3:prefix: models/*
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/models/*
+
+  # ------------------------------------------------------------------ training
+  TrainingJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub ${AWS::StackName}-training
+      Description: Transforms the credit card data and trains the fraud detection model
+      Role: !GetAtt GlueRole.Arn
+      Command:
+        Name: glueetl
+        PythonVersion: "3"
+        ScriptLocation: ../../starter/fraud_detection_pipeline/fraud_detector_model_trainer.py
+      DefaultArguments:
+        --job-language: python
+        --DATA_URL: !Sub s3://${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/data/raw/
+        --MODEL_SAVE_PATH: !Sub s3://${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/models
+        --TempDir: !Sub s3://${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/glue-temp/
+        --enable-metrics: "true"
+        --enable-continuous-cloudwatch-log: "true"
+        --enable-observability-metrics: "true"
+      GlueVersion: !Ref GlueVersion
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 60
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Join ["_", !Split ["-", !Ref AWS::StackName]]
+        Description: Fraud pipeline datasets
+
+  RawDataCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub ${AWS::StackName}-raw-data-crawler
+      Role: !GetAtt GlueRole.Arn
+      DatabaseName: !Ref GlueDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub s3://${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/data/raw/
+
+  # ------------------------------------------------------------------ prediction api
+  ApiRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${AWS::StackName}-api
+      EmptyOnDelete: true
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${AWS::StackName}-api
+      RetentionInDays: 14
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref AWS::StackName
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Fraud API load balancer: HTTP from the internet"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Fraud API tasks: port 8000 from the load balancer only"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${AWS::StackName}-alb
+      Type: application
+      Scheme: internet-facing
+      Subnets: !Ref SubnetIds
+      SecurityGroups: [!Ref AlbSecurityGroup]
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${AWS::StackName}-tg
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 8000
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: "200"
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}-api
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "1024"
+      Memory: "4096"
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: fraud-detection-api
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ApiRepository}:${ApiImageTag}
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: MODEL_S3_BUCKET
+              Value: !Sub ${AWS::StackName}-${AWS::AccountId}-${AWS::Region}
+            - Name: MODEL_S3_PREFIX
+              Value: models/fraud_detection_model_latest
+            - Name: LOCAL_MODEL_PATH
+              Value: /tmp/fraud_detection_model_latest
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApiLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: api
+
+  ApiService:
+    Type: AWS::ECS::Service
+    DependsOn: Listener
+    Properties:
+      ServiceName: !Sub ${AWS::StackName}-api
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      HealthCheckGracePeriodSeconds: 300
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref SubnetIds
+          SecurityGroups: [!Ref TaskSecurityGroup]
+      LoadBalancers:
+        - TargetGroupArn: !Ref TargetGroup
+          ContainerName: fraud-detection-api
+          ContainerPort: 8000
+
+  ScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: HasTasks
+    Properties:
+      ServiceNamespace: ecs
+      ScalableDimension: ecs:service:DesiredCount
+      ResourceId: !Sub service/${Cluster}/${ApiService.Name}
+      MinCapacity: 1
+      MaxCapacity: 4
+
+  CpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: HasTasks
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-api-cpu-target
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 60
+        ScaleInCooldown: 120
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+
+  # ------------------------------------------------------------------ retraining
+  RefreshFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks: [W3002]  # local Code path is intentional; deploy-cfn.sh packages it
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-model-refresh
+      Description: Archives new training data, starts the Glue job, redeploys the API
+      Runtime: !Ref LambdaRuntime
+      Handler: refresh_function.lambda_handler
+      Code: ../../starter/refresh_function/
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          GLUE_JOB_NAME: !Ref TrainingJob
+          MODEL_SAVE_PATH: !Sub s3://${AWS::StackName}-${AWS::AccountId}-${AWS::Region}/models
+          ARCHIVE_PREFIX: data/archive/
+          ECS_CLUSTER: !Ref Cluster
+          ECS_SERVICE: !GetAtt ApiService.Name
+
+  LambdaS3Permission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RefreshFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}
+
+  TrainingSucceededRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${AWS::StackName}-training-succeeded
+      Description: "Glue training job succeeded: redeploy the API so it loads the new model"
+      State: ENABLED
+      EventPattern:
+        source: [aws.glue]
+        detail-type: [Glue Job State Change]
+        detail:
+          jobName: [!Ref TrainingJob]
+          state: [SUCCEEDED]
+      Targets:
+        - Id: refresh-lambda
+          Arn: !GetAtt RefreshFunction.Arn
+
+  LambdaEventsPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RefreshFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TrainingSucceededRule.Arn
+
+  # ------------------------------------------------------------------ monitoring
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-refresh-lambda-errors
+      AlarmDescription: Retraining Lambda failed
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RefreshFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  UnhealthyTargetsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-api-unhealthy-targets
+      AlarmDescription: Prediction API has unhealthy tasks behind the load balancer
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt LoadBalancer.LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !GetAtt TargetGroup.TargetGroupFullName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ServerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-api-5xx-errors
+      AlarmDescription: Prediction API is returning server errors
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  HighCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-api-high-cpu
+      AlarmDescription: Prediction API CPU is high even after scaling
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref Cluster
+        - Name: ServiceName
+          Value: !GetAtt ApiService.Name
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Ref AWS::StackName
+      DashboardBody: !Sub
+        - |
+          {"widgets": [
+            {"type": "metric", "x": 0, "y": 0, "width": 12, "height": 6, "properties": {
+              "title": "API requests and errors", "region": "${AWS::Region}", "stat": "Sum", "period": 60,
+              "metrics": [["AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${AlbName}"],
+                          [".", "HTTPCode_Target_4XX_Count", ".", "."],
+                          [".", "HTTPCode_Target_5XX_Count", ".", "."]]}},
+            {"type": "metric", "x": 12, "y": 0, "width": 12, "height": 6, "properties": {
+              "title": "API latency (seconds)", "region": "${AWS::Region}", "period": 60,
+              "metrics": [["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "${AlbName}", {"stat": "Average"}],
+                          ["...", {"stat": "p99"}]]}},
+            {"type": "metric", "x": 0, "y": 6, "width": 12, "height": 6, "properties": {
+              "title": "API tasks: CPU and memory (%)", "region": "${AWS::Region}", "stat": "Average", "period": 60,
+              "metrics": [["AWS/ECS", "CPUUtilization", "ClusterName", "${Cluster}", "ServiceName", "${ServiceName}"],
+                          [".", "MemoryUtilization", ".", ".", ".", "."]]}},
+            {"type": "metric", "x": 12, "y": 6, "width": 12, "height": 6, "properties": {
+              "title": "Retraining Lambda", "region": "${AWS::Region}", "stat": "Sum", "period": 300,
+              "metrics": [["AWS/Lambda", "Invocations", "FunctionName", "${RefreshFunction}"],
+                          [".", "Errors", ".", "."]]}}
+          ]}
+        - AlbName: !GetAtt LoadBalancer.LoadBalancerFullName
+          ServiceName: !GetAtt ApiService.Name
+
+Outputs:
+  ApiUrl:
+    Value: !Sub http://${LoadBalancer.DNSName}
+  DataBucketName:
+    Value: !Ref DataBucket
+  RepositoryUri:
+    Value: !GetAtt ApiRepository.RepositoryUri
+  TrainingJobName:
+    Value: !Ref TrainingJob
+  ClusterName:
+    Value: !Ref Cluster
+  ServiceName:
+    Value: !GetAtt ApiService.Name
+  RefreshFunctionName:
+    Value: !Ref RefreshFunction

@@ -1,0 +1,38 @@
+# Environment files (keep the example)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+
+# Datasets (live in S3; creditcard.csv is 144 MB, over GitHub's 100 MB limit)
+starter/data/*.csv
+
+# Spark local artifacts
+# (don't ignore *.crc: the saved model in fraud_detection_api/model needs them)
+spark-warehouse/
+metastore_db/
+derby.log
+
+# AWS credentials and infrastructure state
+infra/.build/
+.aws/
+*.pem
+cdk.out/
+.terraform/
+*.tfstate*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

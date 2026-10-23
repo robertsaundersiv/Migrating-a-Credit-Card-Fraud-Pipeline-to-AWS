@@ -1,0 +1,23 @@
+# Secrets: pass at run time with `docker run --env-file .env`, never bake into the image
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Build and repo files the running API doesn't need
+Dockerfile
+.dockerignore
+.git/
+.gitignore
+*.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

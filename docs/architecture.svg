@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1010" viewBox="0 0 1600 1010" font-family="Arial, Helvetica, sans-serif">
+<defs>
+  <marker id="data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#232F3E"/></marker>
+  <marker id="ctrl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#7D8998"/></marker>
+</defs>
+<rect width="1600" height="1010" fill="#FFFFFF"/>
+<text x="60" y="46" font-size="24" font-weight="bold" fill="#232F3E" text-anchor="start">Credit Card Fraud Detection Pipeline on AWS</text>
+<text x="60" y="70" font-size="14" font-weight="normal" fill="#545B64" text-anchor="start">Serve predictions (top) · store data and models (middle) · train and retrain (bottom)</text>
+<line x1="1180" y1="42" x2="1230" y2="42" stroke="#232F3E" stroke-width="2" marker-end="url(#data)"/>
+<text x="1240" y="47" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">data and requests</text>
+<line x1="1180" y1="66" x2="1230" y2="66" stroke="#7D8998" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#ctrl)"/>
+<text x="1240" y="71" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">events and AWS API calls</text>
+<rect x="60" y="110" width="200" height="100" rx="8" fill="#FFFFFF" stroke="#D5DBDB" stroke-width="1.5"/>
+<rect x="60" y="110" width="200" height="6" rx="3" fill="#545B64"/>
+<text x="76" y="138" font-size="12" font-weight="bold" fill="#545B64" text-anchor="start">CLIENT</text>
+<text x="76" y="160" font-size="16" font-weight="bold" fill="#232F3E" text-anchor="start">Fraud check</text>
+<text x="76" y="184" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">card transaction system</text>
+<rect x="360" y="110" width="240" height="100" rx="8" fill="#FFFFFF" stroke="#D5DBDB" stroke-width="1.5"/>
+<rect x="360" y="110" width="240" height="6" rx="3" fill="#8C4FFF"/>
+<text x="376" y="138" font-size="12" font-weight="bold" fill="#8C4FFF" text-anchor="start">APPLICATION LOAD BALANCER</text>
+<text x="376" y="160" font-size="16" font-weight="bold" fill="#232F3E" text-anchor="start">fraud-api-alb</text>
+<text x="376" y="184" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">HTTP :80, health check /health</text>
+<rect x="700" y="90" width="380" height="140" rx="8" fill="#FFFFFF" stroke="#D5DBDB" stroke-width="1.5"/>
+<rect x="700" y="90" width="380" height="6" rx="3" fill="#ED7100"/>
+<text x="716" y="118" font-size="12" font-weight="bold" fill="#ED7100" text-anchor="start">AMAZON ECS ON AWS FARGATE</text>
+<text x="716" y="140" font-size="16" font-weight="bold" fill="#232F3E" text-anchor="start">fraud-detection-api</text>
+<text x="716" y="164" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">FastAPI + PySpark container</text>
+<text x="716" y="185" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">Auto scaling: 1–4 tasks at 60% CPU</text>
+<rect x="716" y="196" width="330" height="22" rx="11" fill="#F2F3F3" stroke="#D5DBDB"/>
+<text x="726" y="211" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">task role: fraud-ecs-task-role (read models/)</text>
+<rect x="1200" y="110" width="240" height="100" rx="8" fill="#FFFFFF" stroke="#D5DBDB" stroke-width="1.5"/>
+<rect x="1200" y="110" width="240" height="6" rx="3" fill="#ED7100"/>
+<text x="1216" y="138" font-size="12" font-weight="bold" fill="#ED7100" text-anchor="start">AMAZON ECR</text>
+<text x="1216" y="160" font-size="16" font-weight="bold" fill="#232F3E" text-anchor="start">fraud-detection-api</text>
+<text x="1216" y="184" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">API container image</text>
+<path d="M 260 160 L 356 160" fill="none" stroke="#232F3E" stroke-width="2" marker-end="url(#data)"/>
+<text x="308" y="150" font-size="13" font-weight="bold" fill="#232F3E" text-anchor="middle" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">POST /predict/</text>
+<path d="M 600 160 L 696 160" fill="none" stroke="#232F3E" stroke-width="2" marker-end="url(#data)"/>
+<text x="648" y="150" font-size="13" font-weight="bold" fill="#232F3E" text-anchor="middle" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">:8000</text>
+<path d="M 1200 160 L 1084 160" fill="none" stroke="#232F3E" stroke-width="2" marker-end="url(#data)"/>
+<text x="1142" y="150" font-size="13" font-weight="bold" fill="#232F3E" text-anchor="middle" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">pull image</text>
+<rect x="360" y="330" width="1080" height="240" rx="8" fill="#FFFFFF" stroke="#D5DBDB" stroke-width="1.5"/>
+<rect x="360" y="330" width="1080" height="6" rx="3" fill="#7AA116"/>
+<text x="376" y="358" font-size="12" font-weight="bold" fill="#7AA116" text-anchor="start">AMAZON S3</text>
+<text x="462" y="358" font-size="16" font-weight="bold" fill="#232F3E" text-anchor="start">fraud-pipeline-&lt;account&gt;-us-east-1</text>
+<text x="376" y="380" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">Encrypted, versioned, public access blocked; each role can reach only the prefixes it needs</text>
+<rect x="380" y="410" width="190" height="100" rx="6" fill="#F4F8EC" stroke="#C5DCA0"/>
+<text x="392" y="436" font-size="14" font-weight="bold" fill="#232F3E" text-anchor="start">data/raw/</text>
+<text x="392" y="460" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">creditcard.csv</text>
+<text x="392" y="480" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">initial training data</text>
+<rect x="590" y="410" width="190" height="100" rx="6" fill="#F4F8EC" stroke="#C5DCA0"/>
+<text x="602" y="436" font-size="14" font-weight="bold" fill="#232F3E" text-anchor="start">data/incoming/</text>
+<text x="602" y="460" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">new monthly CSVs</text>
+<text x="602" y="480" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">upload starts retraining</text>
+<rect x="800" y="410" width="190" height="100" rx="6" fill="#F4F8EC" stroke="#C5DCA0"/>
+<text x="812" y="436" font-size="14" font-weight="bold" fill="#232F3E" text-anchor="start">data/archive/</text>
+<text x="812" y="460" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">processed files</text>
+<text x="812" y="480" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">&lt;name&gt;_retrain_&lt;date&gt;.csv</text>
+<rect x="1010" y="410" width="200" height="100" rx="6" fill="#F4F8EC" stroke="#C5DCA0"/>
+<text x="1022" y="436" font-size="14" font-weight="bold" fill="#232F3E" text-anchor="start">models/…_latest/</text>
+<text x="1022" y="460" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">model the API loads</text>
+<text x="1022" y="480" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">overwritten each run</text>
+<rect x="1230" y="410" width="190" height="100" rx="6" fill="#F4F8EC" stroke="#C5DCA0"/>
+<text x="1242" y="436" font-size="14" font-weight="bold" fill="#232F3E" text-anchor="start">models/archive/</text>
+<text x="1242" y="460" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">dated copy per run</text>
+<text x="1242" y="480" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">for rollback</text>
+<rect x="60" y="400" width="200" height="110" rx="8" fill="#FFFFFF" stroke="#D5DBDB" stroke-width="1.5"/>
+<rect x="60" y="400" width="200" height="6" rx="3" fill="#545B64"/>
+<text x="76" y="428" font-size="12" font-weight="bold" fill="#545B64" text-anchor="start">DATA TEAM</text>
+<text x="76" y="450" font-size="16" font-weight="bold" fill="#232F3E" text-anchor="start">New transactions</text>
+<text x="76" y="474" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">monthly labeled CSV</text>
+<path d="M 260 440 L 330 440 L 330 395 L 685 395 L 685 406" fill="none" stroke="#232F3E" stroke-width="2" marker-end="url(#data)"/>
+<text x="292" y="462" font-size="13" font-weight="bold" fill="#232F3E" text-anchor="middle" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">upload .csv</text>
+<path d="M 1040 410 L 1040 234" fill="none" stroke="#232F3E" stroke-width="2" marker-end="url(#data)"/>
+<text x="1052" y="300" font-size="13" font-weight="bold" fill="#232F3E" text-anchor="start" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">download model at startup</text>
+<rect x="360" y="650" width="300" height="150" rx="8" fill="#FFFFFF" stroke="#D5DBDB" stroke-width="1.5"/>
+<rect x="360" y="650" width="300" height="6" rx="3" fill="#ED7100"/>
+<text x="376" y="678" font-size="12" font-weight="bold" fill="#ED7100" text-anchor="start">AWS LAMBDA</text>
+<text x="376" y="700" font-size="16" font-weight="bold" fill="#232F3E" text-anchor="start">fraud-model-refresh</text>
+<text x="376" y="724" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">archive the file, start Glue training</text>
+<text x="376" y="745" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">after training: redeploy the API</text>
+<rect x="376" y="766" width="192" height="22" rx="11" fill="#F2F3F3" stroke="#D5DBDB"/>
+<text x="386" y="781" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">fraud-refresh-lambda-role</text>
+<rect x="760" y="650" width="320" height="150" rx="8" fill="#FFFFFF" stroke="#D5DBDB" stroke-width="1.5"/>
+<rect x="760" y="650" width="320" height="6" rx="3" fill="#8C4FFF"/>
+<text x="776" y="678" font-size="12" font-weight="bold" fill="#8C4FFF" text-anchor="start">AWS GLUE 5.0 (SPARK JOB)</text>
+<text x="776" y="700" font-size="16" font-weight="bold" fill="#232F3E" text-anchor="start">fraud-detection-training</text>
+<text x="776" y="724" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">trains the Random Forest pipeline</text>
+<text x="776" y="745" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">crawler → Glue Data Catalog</text>
+<rect x="776" y="766" width="186" height="22" rx="11" fill="#F2F3F3" stroke="#D5DBDB"/>
+<text x="786" y="781" font-size="12" font-weight="normal" fill="#545B64" text-anchor="start">fraud-glue-training-role</text>
+<rect x="1180" y="650" width="260" height="150" rx="8" fill="#FFFFFF" stroke="#D5DBDB" stroke-width="1.5"/>
+<rect x="1180" y="650" width="260" height="6" rx="3" fill="#E7157B"/>
+<text x="1196" y="678" font-size="12" font-weight="bold" fill="#E7157B" text-anchor="start">AMAZON EVENTBRIDGE</text>
+<text x="1196" y="700" font-size="16" font-weight="bold" fill="#232F3E" text-anchor="start">fraud-training-succeeded</text>
+<text x="1196" y="724" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">Glue job state = SUCCEEDED</text>
+<path d="M 640 510 L 640 646" fill="none" stroke="#7D8998" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#ctrl)"/>
+<text x="630" y="600" font-size="13" font-weight="bold" fill="#7D8998" text-anchor="end" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">S3 event: new .csv</text>
+<path d="M 660 725 L 756 725" fill="none" stroke="#7D8998" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#ctrl)"/>
+<text x="708" y="715" font-size="13" font-weight="bold" fill="#7D8998" text-anchor="middle" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">StartJobRun</text>
+<path d="M 850 510 L 850 646" fill="none" stroke="#232F3E" stroke-width="2" marker-end="url(#data)"/>
+<text x="862" y="600" font-size="13" font-weight="bold" fill="#232F3E" text-anchor="start" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">read CSV</text>
+<path d="M 1050 650 L 1050 514" fill="none" stroke="#232F3E" stroke-width="2" marker-end="url(#data)"/>
+<text x="1038" y="600" font-size="13" font-weight="bold" fill="#232F3E" text-anchor="end" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">write model</text>
+<path d="M 1080 725 L 1176 725" fill="none" stroke="#7D8998" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#ctrl)"/>
+<text x="1128" y="715" font-size="13" font-weight="bold" fill="#7D8998" text-anchor="middle" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">succeeded</text>
+<path d="M 1310 800 L 1310 850 L 560 850 L 560 804" fill="none" stroke="#7D8998" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#ctrl)"/>
+<text x="935" y="842" font-size="13" font-weight="bold" fill="#7D8998" text-anchor="middle" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">invoke Lambda</text>
+<path d="M 420 800 L 420 880 L 1540 880 L 1540 260 L 1120 260 L 1120 210 L 1084 210" fill="none" stroke="#7D8998" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#ctrl)"/>
+<text x="1330" y="252" font-size="13" font-weight="bold" fill="#7D8998" text-anchor="middle" stroke="#FFFFFF" stroke-width="5" paint-order="stroke">UpdateService: redeploy so the API loads the new model</text>
+<rect x="60" y="915" width="1480" height="70" rx="8" fill="#FFFFFF" stroke="#D5DBDB" stroke-width="1.5"/>
+<rect x="60" y="915" width="1480" height="6" rx="3" fill="#E7157B"/>
+<text x="76" y="943" font-size="12" font-weight="bold" fill="#E7157B" text-anchor="start">AMAZON CLOUDWATCH</text>
+<text x="230" y="943" font-size="14" font-weight="normal" fill="#232F3E" text-anchor="start">Logs from Glue runs, the Lambda (/aws/lambda/fraud-model-refresh) and the API (/ecs/fraud-detection-api)</text>
+<text x="76" y="968" font-size="13" font-weight="normal" fill="#545B64" text-anchor="start">Container Insights for the ECS service · 4 alarms (Lambda errors, unhealthy targets, 5xx, high CPU) · fraud-pipeline dashboard · CloudTrail for API audit (blocked in the lab)</text>
+</svg>

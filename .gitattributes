@@ -1,0 +1,8 @@
+# Normalize line endings; scripts and Dockerfiles run on Linux in AWS
+* text=auto
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.png binary
+*.docx binary
+# Saved Spark models carry .crc checksums; any line-ending rewrite breaks loading
+starter/fraud_detection_api/model/** -text
